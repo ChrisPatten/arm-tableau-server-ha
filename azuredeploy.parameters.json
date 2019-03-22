@@ -1,0 +1,27 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "resourceNamePrefix": {
+        "value": "tabsvr"
+      },
+      "adminUsername": {
+        "value": "tabsvradmin"
+      },
+      "adminPassword": {
+        "value": "myPassword123"
+      },
+      "jumpBoxWindowsOSVersion": {
+        "value": "2019-Datacenter-smalldisk"
+      },
+      "tableauWindowsOSVersion": {
+        "value": "2019-Datacenter-smalldisk"
+      },
+      "dnsLabelPrefix": {
+        "value": "tabsvrtest2"
+      },
+      "sourceIPWhitelist": {
+        "value": "12.0.74.58,12.0.74.59,4.53.48.18,4.53.48.19,159.100.164.32"
+      }
+    }
+  }

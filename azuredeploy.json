@@ -1,0 +1,364 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json",
+    "contentVersion": "1.0.0.1",
+    "parameters": {
+        "resourceNamePrefix": {
+            "type": "string",
+            "defaultValue": "tabsvr",
+            "metadata": {
+                "description": "Prefix to use for resource names (e.g. \"tabsvr-vm-jump\")"
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "defaultValue": "tabsvradmin",
+            "metadata": {
+                "description": "Admin user name for the VMs (max. 20 characters)"
+            }
+        },
+        "adminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "Admin password for the VMs (8-23 characters, mix of upper and lower-case characters, digits and symbols)"
+            }
+        },
+        "jumpBoxWindowsOSVersion": {
+            "type": "string",
+            "defaultValue": "2019-Datacenter-smalldisk",
+            "allowedValues": [
+                "2008-R2-SP1",
+                "2012-Datacenter",
+                "2012-R2-Datacenter",
+                "2019-Datacenter-smalldisk"
+            ],
+            "metadata": {
+                "description": "Set this value for the VM Windows OS Version"
+            }
+        },
+        "tableauWindowsOSVersion": {
+            "type": "string",
+            "defaultValue": "2019-Datacenter-smalldisk",
+            "allowedValues": [
+                "2008-R2-SP1",
+                "2012-Datacenter",
+                "2012-R2-Datacenter",
+                "2019-Datacenter-smalldisk"
+            ],
+            "metadata": {
+                "description": "Set this value for the VM Windows OS Version"
+            }
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Location for all resources"
+            }
+        },
+        "dnsLabelPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Unique DNS Name for the Public IP used to access the cluster"
+            }
+        },
+        "sourceIPWhitelist": {
+            "type": "string",
+            "defaultValue": "*",
+            "metadata": {
+                "description": "Comma separated list or CIDR ranges of IPs to whitelist for inbound traffic"
+            }
+        }
+    },
+    "variables": {
+        "storageAccountName": "[toLower(take(concat(parameters('resourceNamePrefix'), 'vmstorage', uniquestring(resourceGroup().id)), 24))]",
+        "storageAccountType": "Standard_LRS",
+        "virtualNetworkName": "[concat(parameters('resourceNamePrefix'), '-vnet')]",
+        "addressPrefix": "10.0.0.0/16",
+        "subnetName": "[concat(parameters('resourceNamePrefix'), '-vnet-backend')]",
+        "subnetPrefix": "10.0.0.0/24",
+        "subnetOct0": "[split(variables('subnetPrefix'), '.')[0]]",
+        "subnetOct1": "[split(variables('subnetPrefix'), '.')[1]]",
+        "subnetOct2": "[split(variables('subnetPrefix'), '.')[2]]",
+        "subnetRef": "[resourceId('Microsoft.Network/virtualNetworks/subnets', variables('virtualNetworkName'), variables('subnetName'))]",
+        "publicIPAddressName": "[concat(parameters('resourceNamePrefix'), '-publicip')]",
+        "publicIPAddressType": "Dynamic",
+        "vmPrefix": "[concat(parameters('resourceNamePrefix'), '-vm')]",
+        "jumpBoxName": "[concat(variables('vmPrefix'), '-jump')]",
+        "jumpBoxNicName": "[concat(variables('jumpBoxName'), '-nic')]",
+        "jumpBoxNSGName": "[concat(variables('jumpBoxName'), '-nsg')]",
+        "jumpBoxVMSize": "Standard_B2ms",
+        "tableauInitialNodeName": "[concat(variables('vmPrefix'), '-tabinitial')]",
+        "tableauNSGName": "[concat(parameters('resourceNamePrefix'), '-tabsvr-nsg')]",
+        "imagePublisher": "MicrosoftWindowsServer",
+        "imageOffer": "WindowsServer",
+        "loadBalancerName": "[concat(parameters('resourceNamePrefix'), '-lb')]",
+        "loadBalancerRef": "[resourceId('Microsoft.Network/loadBalancers', variables('loadBalancerName'))]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "name": "[variables('storageAccountName')]",
+            "apiVersion": "2018-07-01",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[variables('storageAccountType')]"
+            },
+            "kind": "Storage",
+            "properties": {}
+        },
+        {
+            "apiVersion": "2018-10-01",
+            "type": "Microsoft.Network/virtualNetworks",
+            "name": "[variables('virtualNetworkName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[variables('addressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[variables('subnetName')]",
+                        "properties": {
+                            "addressPrefix": "[variables('subnetPrefix')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2018-10-01",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "name": "[variables('publicIPAddressName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "publicIPAllocationMethod": "[variables('publicIPAddressType')]",
+                "dnsSettings": {
+                    "domainNameLabel": "[parameters('dnsLabelPrefix')]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2018-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('jumpBoxNSGName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "AllowRDPInbound",
+                        "properties": {
+                            "description": "Allow RDP Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRange": "3389",
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 300,
+                            "direction": "Inbound",
+                            "sourceAddressPrefixes": "[split(parameters('sourceIPWhitelist'), ',')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2018-12-01",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "name": "[variables('tableauNSGName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "securityRules": [
+                    {
+                        "name": "AllowHTTPHTTPSTSMInbound",
+                        "properties": {
+                            "description": "Allow HTTP/HTTPS/TSM Inbound",
+                            "protocol": "Tcp",
+                            "sourcePortRange": "*",
+                            "destinationPortRanges": [
+                                "80",
+                                "443",
+                                "8850"
+                            ],
+                            "destinationAddressPrefix": "*",
+                            "access": "Allow",
+                            "priority": 300,
+                            "direction": "Inbound",
+                            "sourceAddressPrefixes": "[split(parameters('sourceIPWhitelist'), ',')]"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "Microsoft.Network/loadBalancers",
+            "name": "[variables('loadBalancerName')]",
+            "location": "[parameters('location')]",
+            "apiVersion": "2018-11-01",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+            ],
+            "properties": {
+                "frontendIPConfigurations": [
+                    {
+                        "name": "[concat(variables('loadBalancerName'), '-frontend')]",
+                        "properties": {
+                            "publicIPAddress": {
+                                "id": "[resourceId('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]"
+                            }
+                        }
+                    }
+                ],
+                "backendAddressPools": [
+                    {
+                        "name": "[concat(variables('loadBalancerName'), '-backendpool1')]"
+                    }
+                ],
+                "inboundNatRules": [
+                    {
+                        "name": "TableauServerManager",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[concat(variables('loadBalancerRef'), '/frontendIPConfigurations/', concat(variables('loadBalancerName'), '-frontend'))]"
+                            },
+                            "protocol": "Tcp",
+                            "frontendPort": 8850,
+                            "backendPort": 8850
+                        }
+                    },
+                    {
+                        "name": "JumpBoxRDP",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[concat(variables('loadBalancerRef'), '/frontendIPConfigurations/', concat(variables('loadBalancerName'), '-frontend'))]"
+                            },
+                            "protocol": "Tcp",
+                            "frontendPort": 3389,
+                            "backendPort": 3389
+                        }
+                    }
+                ],
+                "loadBalancingRules": [
+                    {
+                        "name": "httpRule",
+                        "properties": {
+                            "frontendIPConfiguration": {
+                                "id": "[concat(variables('loadBalancerRef'), '/frontendIPConfigurations/', concat(variables('loadBalancerName'), '-frontend'))]"
+                            },
+                            "backendAddressPool": {
+                                "id": "[concat(variables('loadBalancerRef'), '/backendAddressPools/', concat(variables('loadBalancerName'), '-backendpool1'))]"
+                            },
+                            "protocol": "Tcp",
+                            "frontendPort": 443,
+                            "backendPort": 443,
+                            "probe": {
+                                "id": "[concat(variables('loadBalancerRef'), '/probes/httpProbe')]"
+                            }
+                        }
+                    }
+                ],
+                "probes": [
+                    {
+                        "name": "httpProbe",
+                        "properties": {
+                            "protocol": "Tcp",
+                            "port": 443,
+                            "intervalInSeconds": 30,
+                            "numberOfProbes": 2
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "apiVersion": "2018-10-01",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[variables('jumpBoxNicName')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses/', variables('publicIPAddressName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks/', variables('virtualNetworkName'))]",
+                "[resourceId('Microsoft.Network/networkSecurityGroups/', variables('jumpBoxNSGName'))]",
+                "[variables('loadBalancerRef')]"
+            ],
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig1",
+                        "properties": {
+                            "privateIPAllocationMethod": "Static",
+                            "privateIPAddress": "[concat(variables('subnetOct0'), '.', variables('subnetOct1'), '.', variables('subnetOct2'), '.', '4')]",
+                            "subnet": {
+                                "id": "[variables('subnetRef')]"
+                            },
+                            "loadBalancerInboundNatRules": [
+                                {
+                                    "id": "[concat(variables('loadBalancerRef'), '/inboundNatRules/JumpBoxRDP')]"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "networkSecurityGroup": {
+                    "id": "[resourceId('Microsoft.Network/networkSecurityGroups/', variables('jumpBoxNSGName'))]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2018-10-01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[variables('jumpBoxName')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+                "[resourceId('Microsoft.Network/networkInterfaces/', variables('jumpBoxNicName'))]"
+            ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[variables('jumpBoxVMSize')]"
+                },
+                "osProfile": {
+                    "computerName": "[variables('jumpBoxName')]",
+                    "adminUsername": "[parameters('adminUsername')]",
+                    "adminPassword": "[parameters('adminPassword')]",
+                    "windowsConfiguration": {
+                        "provisionVMAgent": true,
+                        "enableAutomaticUpdates": true
+                    }
+                },
+                "storageProfile": {
+                    "imageReference": {
+                        "publisher": "[variables('imagePublisher')]",
+                        "offer": "[variables('imageOffer')]",
+                        "sku": "[parameters('jumpBoxWindowsOSVersion')]",
+                        "version": "latest"
+                    },
+                    "osDisk": {
+                        "createOption": "FromImage"
+                    },
+                    "dataDisks": [
+                        {
+                            "diskSizeGB": 20,
+                            "lun": 0,
+                            "createOption": "Empty"
+                        }
+                    ]
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces',variables('jumpBoxNicName'))]"
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": true,
+                        "storageUri": "[concat(reference(concat('Microsoft.Storage/storageAccounts/', variables('storageAccountName')), '2016-01-01').primaryEndpoints.blob)]"
+                    }
+                }
+            }
+        }
+    ]
+}
